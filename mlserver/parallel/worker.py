@@ -87,7 +87,7 @@ class Worker(Process):
                 loop.add_signal_handler(sign, _noop)
         except RuntimeError:
             # Ignore if the loop is already closed
-            pass
+            print("DEBUG: ignoring runtime error")
 
     def __inner_init__(self):
         """
