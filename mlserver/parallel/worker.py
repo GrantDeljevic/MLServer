@@ -81,13 +81,14 @@ class Worker(Process):
         try:
             loop = asyncio.get_event_loop()
             
-            for sign in IGNORED_SIGNALS:
-                # Ensure that signal handlers are a no-op, to let the main process
-                # take care of cleaning up workers
-                loop.add_signal_handler(sign, _noop)
         except RuntimeError:
             # Ignore if the loop is already closed
-            print("DEBUG: ignoring runtime error")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        for sign in IGNORED_SIGNALS:
+            # Ensure that signal handlers are a no-op, to let the main process
+            # take care of cleaning up workers
+            loop.add_signal_handler(sign, _noop)
 
     def __inner_init__(self):
         """
