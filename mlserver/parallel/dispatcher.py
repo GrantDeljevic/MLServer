@@ -81,13 +81,9 @@ class AsyncResponses:
         self._workers_map[worker.pid].add(message.id)  # type: ignore
 
     async def _wait(self, message_id: str) -> ModelResponseMessage:
+        # Do not clear here, resolve() will clear to avoid races with late responses.
         future = self._futures[message_id]
-
-        try:
-            response_message = await future
-            return response_message
-        finally:
-            self._clear_message(message_id)
+        return await future
 
     def _clear_message(self, message_id: str) -> None:
         del self._futures[message_id]
@@ -99,16 +95,23 @@ class AsyncResponses:
         Resolve a previously scheduled response future.
         """
         message_id = response.id
-        future = self._futures[message_id]
+        future = self._futures.get(message_id)
+        if future is None:
+            logger.debug("Dropping late response for %s",message_id)
+            return
 
         # NOTE: Use call_soon_threadsafe to cover cases where `model.predict()`
         # (or other methods) get called from a separate thread (and a separate
         # AsyncIO loop)
         loop = future.get_loop()
-        if response.exception:
-            loop.call_soon_threadsafe(future.set_exception, response.exception)
-        else:
-            loop.call_soon_threadsafe(future.set_result, response)
+        def _complete():
+            if response.exception:
+                future.set_exception(response.exception)
+            else:
+                future.set_result(response)
+            self._clear_message(message_id)
+
+        loop.call_soon_threadsafe(_complete)
 
     def cancel(self, worker: Worker, exit_code: int):
         """
@@ -123,11 +126,15 @@ class AsyncResponses:
                 f"exit code {exit_code}..."
             )
         for message_id in in_flight:
+            future=self._futures.get(message_id)
+            if future is None:
+                continue
             err = WorkerStop(exit_code)
-            future = self._futures[message_id]
             loop = future.get_loop()
-            loop.call_soon_threadsafe(future.set_exception, err)
-
+            def _cancel():
+                future.set_exception(err)
+                self._clear_message(message_id)
+            loop.call_soon_threadsafe(_cancel)
 
 class Dispatcher:
     def __init__(self, workers: Dict[int, Worker], responses: Queue):
