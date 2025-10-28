@@ -122,7 +122,7 @@ class AsyncResponses:
         Cancel in-flight requests for worker (e.g. because it died
         unexpectedly).
         """
-        in_flight = self._workers_map[worker.pid]  # type: ignore
+        in_flight = self._workers_map.get(worker.pid)  # type: ignore
         if in_flight:
             logger.info(
                 f"Cancelling {len(in_flight)} in-flight requests for "
@@ -131,15 +131,16 @@ class AsyncResponses:
             )
         for message_id in in_flight:
             future=self._futures.get(message_id)
-            if future is None:
+            if not future or future.done():
                 continue
             err = WorkerStop(exit_code)
             loop = future.get_loop()
             def _cancel():
-                future.set_exception(err)
-                self._clear_message(message_id)
+                if not future.done():
+                    future.set_exception(err)
+                    self._clear_message(message_id)
             loop.call_soon_threadsafe(_cancel)
-
+        self._workers_map.pop(worker.pid, None)
 class Dispatcher:
     def __init__(self, workers: Dict[int, Worker], responses: Queue):
         self._responses = responses
