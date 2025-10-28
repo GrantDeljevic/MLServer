@@ -96,7 +96,7 @@ class AsyncResponses:
         """
         message_id = response.id
         future = self._futures.get(message_id)
-        if future is None:
+        if future is None or future.done():
             logger.debug("Dropping late response for %s",message_id)
             return
 
@@ -105,12 +105,16 @@ class AsyncResponses:
         # AsyncIO loop)
         loop = future.get_loop()
         def _complete():
+            # Double-check after scheduling; state may have changed meanwhile.
+            if future.done():
+                logger.debug("Future %s already settled on callback, skip", message_id)
+                return
             if response.exception:
                 future.set_exception(response.exception)
             else:
                 future.set_result(response)
             self._clear_message(message_id)
-
+            
         loop.call_soon_threadsafe(_complete)
 
     def cancel(self, worker: Worker, exit_code: int):
